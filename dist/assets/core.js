@@ -8,6 +8,14 @@ export const STAGES = [
 ];
 export const CHECKS = ['角色造型与镜头连续性已检查','对白、配音与字幕已核对','音乐、字体和素材授权已确认','画幅、分辨率与发布平台要求已核对','封面、简介与 AI 内容标识要求已核对','项目资料和成片已分别备份'];
 const text = (v,n=20000) => typeof v === 'string' ? v.slice(0,n) : '';
+export function importProjects(input) {
+  const values=input?.kind==='mangaflow-backup'&&input?.schemaVersion===1?input.projects:[input];
+  if(!Array.isArray(values)||!values.length||values.length>30) throw new Error('备份应包含 1—30 个有效项目');
+  return values.map(normalizeProject);
+}
+export function createBackup(projects) {
+  return {kind:'mangaflow-backup',schemaVersion:1,exportedAt:new Date().toISOString(),projects};
+}
 export function newProject(name='未命名漫剧') {
   return {schemaVersion:1,id:globalThis.crypto.randomUUID(),name,updatedAt:new Date().toISOString(),genre:'悬疑',style:'电影感国漫',ratio:'9:16',duration:60,idea:'',audience:'',script:'',characters:'',production:'',delivery:'',shots:[],completed:[],checks:[]};
 }

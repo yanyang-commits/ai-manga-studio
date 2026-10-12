@@ -9,7 +9,7 @@ class Links(HTMLParser):
             if k not in ('href', 'src') or not v or v.startswith(('#', 'http:', 'https:', 'data:', 'mailto:')):
                 continue
             path = unquote(urlsplit(v).path)
-            if path and not (self.file.parent / path).is_file():
+            if path and not ((root / path.lstrip('/')) if path.startswith('/') else (self.file.parent / path)).is_file() and path != '/':
                 errors.append(f'{self.file.name}: missing {v}')
 for file in root.glob('*.html'):
     parser = Links(); parser.file = file; parser.feed(file.read_text())
