@@ -1,13 +1,14 @@
 {
   "name": "ai-manga-studio",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "漫序 MangaFlow — local-first AI manga production workspace",
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check dist/assets/app.js && node --check dist/assets/core.js && node --check dist/assets/ai-provider.js",
-    "start": "python3 -m http.server 3000 --directory dist"
+    "check": "node --check web/assets/app.js && node --check web/assets/core.js && node --check web/assets/catalog.js && node --check web/assets/assist.js && node --check worker/index.js",
+    "start": "python3 -m http.server 3000 --directory web",
+    "build": "node scripts/build.mjs && node scripts/validate-artifact.mjs"
   },
   "engines": {
     "node": ">=20"

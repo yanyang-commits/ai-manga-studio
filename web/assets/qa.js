@@ -1,0 +1,1 @@
+const frame=document.querySelector('#qa-frame');document.querySelector('#qa-width').addEventListener('change',e=>{frame.style.width=e.target.value+'px';});document.querySelector('#qa-page').addEventListener('change',e=>{frame.src=e.target.value;});

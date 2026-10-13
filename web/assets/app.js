@@ -1,20 +1,35 @@
-import {STAGES,CHECKS,TEMPLATES,newProject,normalizeProject,exampleProject,buildPrompt,projectMarkdown,shotsCSV,importProjects,createBackup} from './core.js?v=0.1.1';
+import {STAGES,CHECKS,TEMPLATES,newProject,normalizeProject,exampleProject,buildPrompt,projectMarkdown,shotsCSV,importProjects,createBackup} from './core.js?v=0.2.0';
+import {PROMPTS,TOOLS,fillTemplate} from './catalog.js?v=0.2.0';
+import {associate,reviewProject} from './assist.js?v=0.2.0';
 const $=s=>document.querySelector(s);
 const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const page=document.body.dataset.page;
+let session={user:null,cloudAvailable:false,providers:[]};
+try{const r=await fetch('/api/session',{cache:'no-store',signal:AbortSignal.timeout(6000)});if(r.ok)session=await r.json();}catch{}
+const cloudMode=page==='studio'&&!!session.user&&new URLSearchParams(location.search).get('space')!=='local';
+let cloudRevision=null,cloudTimer,cloudPending=false,cloudSaving=false,cloudDirty=false,assistSeed=0;
 let toastTimer;
 function toast(message){$('#toast').textContent=message;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').textContent='',4500);}
 const STORE='mangaflow.projects.v1', ACTIVE='mangaflow.active.v1';
 let projects=[],currentId='',storageFailed=false,loadBlocked=false,lastSnapshot=null,conflict=false;
 try {
-  const raw=localStorage.getItem(STORE);lastSnapshot=raw;
-  if(raw){const parsed=JSON.parse(raw);if(!Array.isArray(parsed))throw new Error('Invalid data');projects=parsed.slice(0,30).map(p=>{const clean=normalizeProject(p);if(typeof p.id==='string')clean.id=p.id;if(typeof p.updatedAt==='string')clean.updatedAt=p.updatedAt;return clean;});}
-  currentId=localStorage.getItem(ACTIVE)||projects[0]?.id||'';
-}catch{storageFailed=true;loadBlocked=true;toast('无法读取本地项目。为保护已有数据，本次只在内存中编辑，请导出备份。');}
+  if(cloudMode){const r=await fetch('/api/projects',{cache:'no-store'});if(!r.ok)throw new Error('Cloud unavailable');const data=await r.json();projects=data.projects;cloudRevision=data.revision;currentId=projects[0]?.id||'';}
+  else {const raw=localStorage.getItem(STORE);lastSnapshot=raw;
+   if(raw){const parsed=JSON.parse(raw);if(!Array.isArray(parsed))throw new Error('Invalid data');projects=parsed.slice(0,30).map(p=>{const clean=normalizeProject(p);if(typeof p.id==='string')clean.id=p.id;if(typeof p.updatedAt==='string')clean.updatedAt=p.updatedAt;return clean;});}
+   currentId=localStorage.getItem(ACTIVE)||projects[0]?.id||'';
+  }
+}catch{storageFailed=true;loadBlocked=true;toast((cloudMode?'无法读取云端项目。':'无法读取本地项目。')+'为保护已有数据，本次只在内存中编辑，请导出备份。');}
 const current=()=>projects.find(p=>p.id===currentId)||projects[0];
+async function saveCloud(){
+ if(cloudSaving||loadBlocked||conflict)return;cloudSaving=true;cloudDirty=false;cloudPending=true;saveLabel('正在保存到账号云端……');
+ try{const r=await fetch('/api/projects',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({projects,revision:cloudRevision})});const data=await r.json();if(!r.ok){if(r.status===409)conflict=true;throw new Error(data.error?.message||'云端保存失败');}cloudRevision=data.revision;storageFailed=false;saveLabel('已保存到账号云端 · '+new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}));}
+ catch(error){storageFailed=true;cloudDirty=true;saveLabel(error.message+'；当前编辑仍保留在本页，请导出备份。');toast(error.message);}
+ finally{cloudSaving=false;cloudPending=cloudDirty;if(cloudDirty&&!storageFailed&&!conflict)saveCloud();}
+}
 function persist(){
   if(loadBlocked){saveLabel('本次为临时编辑：无法读取原存储，请导出 JSON 备份。');return false;}
   if(conflict){saveLabel('另一标签页已更新项目。请先导出本页备份，再刷新读取最新数据。');return false;}
+  if(cloudMode){cloudDirty=true;cloudPending=true;clearTimeout(cloudTimer);cloudTimer=setTimeout(saveCloud,700);saveLabel('待保存到账号云端……');return true;}
   try{
     if(localStorage.getItem(STORE)!==lastSnapshot){conflict=true;storageFailed=true;showConflict();return false;}
     const snapshot=JSON.stringify(projects);localStorage.setItem(STORE,snapshot);lastSnapshot=snapshot;localStorage.setItem(ACTIVE,currentId);storageFailed=false;saveLabel('已保存到本机 · '+new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}));return true;
@@ -23,12 +38,13 @@ function persist(){
 }
 function saveLabel(message){if($('#save-status'))$('#save-status').textContent=message;}
 function showConflict(){const warning=$('#storage-warning');if(warning){warning.hidden=false;warning.textContent='检测到其他标签页更新了项目。为避免覆盖，本页暂停自动保存；请先导出本页全部项目备份，再刷新页面。';}saveLabel('保存已暂停：其他标签页有新版本，请先备份再刷新。');toast('检测到其他标签页更新，请备份后刷新。');}
-window.addEventListener('storage',e=>{if((e.key===STORE||e.key===null)&&e.newValue!==lastSnapshot){conflict=true;storageFailed=true;showConflict();}});
+window.addEventListener('storage',e=>{if(!cloudMode&&(e.key===STORE||e.key===null)&&e.newValue!==lastSnapshot){conflict=true;storageFailed=true;showConflict();}});
 function touch(){const p=current();if(p)p.updatedAt=new Date().toISOString();persist();}
 function addProject(p){if(projects.length>=30){toast('已达到 30 个项目，请备份并删除不需要的项目。');return false;}projects.push(p);currentId=p.id;persist();return true;}
 async function copy(text){try{await navigator.clipboard.writeText(text);toast('已复制，可粘贴到你的 AI 工具。');}catch{const dialog=$('#copy-dialog');$('#copy-fallback').value=text;dialog.showModal();$('#copy-fallback').focus();$('#copy-fallback').select();toast('请长按复制，或使用 Ctrl/Cmd+C。');}}
 function download(content,ext,mime,name){const p=current();const filename=(name||p?.name||'漫序项目').replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').slice(0,80);const url=URL.createObjectURL(new Blob([content],{type:mime}));const a=document.createElement('a');a.href=url;a.download=filename+'.'+ext;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('已发起下载，请保存备份文件。');}
 function templateCard(t){return `<article class="template-card"><div class="template-top"><span class="pill">${t.short}</span><span class="number">${t.icon} / 06</span></div><h3>${t.title}</h3><p>${t.prompt}</p><div class="actions"><a class="text-link" href="studio.html?stage=${t.id}">在工作台使用 ↗</a><button class="btn small" data-copy-template="${t.id}">复制模板</button></div></article>`;}
+function richTemplateCard(t){const s=STAGES.find(s=>s.id===t.stage);return `<article class="template-card"><div class="template-top"><span class="pill">${s.short} · ${escape(t.tag)}</span><span class="number">${t.level}</span></div><h3>${t.title}</h3><p>${t.task}</p><div class="actions"><button class="btn small" data-view-template="${t.id}">查看 / 复制</button><a class="text-link" href="studio.html?stage=${t.stage}&template=${t.id}">带入项目 ↗</a></div></article>`;}
 if(page==='index'){
   $('#home-flow').innerHTML=STAGES.map(s=>`<a class="flow-card" href="studio.html?stage=${s.id}"><span class="number">${s.icon} /</span><h3>${s.name}</h3><p>${s.desc}</p><span class="arrow" aria-hidden="true">↗</span></a>`).join('');
   $('#home-templates').innerHTML=TEMPLATES.slice(1,4).map(templateCard).join('');
@@ -36,7 +52,7 @@ if(page==='index'){
 if(page==='templates'){
   let category='all';
   $('#template-filters').innerHTML=[{id:'all',short:'全部'},...STAGES].map(s=>`<button class="filter ${s.id==='all'?'active':''}" aria-pressed="${s.id==='all'}" data-filter="${s.id}">${s.short}</button>`).join('');
-  function renderTemplates(){const q=$('#template-search').value.trim().toLowerCase();const result=TEMPLATES.filter(t=>(category==='all'||t.id===category)&&`${t.title}${t.prompt}${t.name}`.toLowerCase().includes(q));$('#template-list').innerHTML=result.map(templateCard).join('')||'<div class="empty no-results">没有找到匹配的模板。试试“分镜”“角色”或清空筛选。</div>';$('#template-count').textContent=`共 ${result.length} 个模板 · 可直接复制，也可带入项目上下文`;}
+  function renderTemplates(){const q=$('#template-search').value.trim().toLowerCase();const result=PROMPTS.filter(t=>(category==='all'||t.stage===category)&&`${t.title}${t.task}${t.tag}${t.level}`.toLowerCase().includes(q));$('#template-list').innerHTML=result.map(richTemplateCard).join('')||'<div class="empty no-results">没有找到匹配的模板。试试“分镜”“角色”或清空筛选。</div>';$('#template-count').textContent=`找到 ${result.length} / ${PROMPTS.length} 个模板 · 点击查看完整指令，也可带入项目上下文`;}
   $('#template-search').addEventListener('input',renderTemplates);
   $('#template-filters').addEventListener('click',e=>{const b=e.target.closest('[data-filter]');if(!b)return;category=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(el=>{el.classList.toggle('active',el===b);el.setAttribute('aria-pressed',String(el===b));});renderTemplates();});renderTemplates();
 }
@@ -62,12 +78,15 @@ function renderEditor(){
   if(stage==='delivery')body=field('剪辑与发布备注','delivery',p.delivery,{type:'textarea',hint:'记录成片链接、封面标题、简介、剪辑节奏、目标平台与导出规格。'})+CHECKS.map((label,i)=>`<label class="check-row"><input type="checkbox" data-check="${i}" ${p.checks.includes(i)?'checked':''}><span>${label}</span></label>`).join('');
   $('#editor').innerHTML=`<div class="editor-heading"><div><h2>${s.icon} &nbsp; ${s.name}</h2><p>${s.desc}</p></div><button class="btn small" data-action="complete">${p.completed.includes(stage)?'✓ 已确认 · 撤销':'标记阶段完成'}</button></div>${body}<div class="helper">先写下已知信息，再让 AI 帮你补全。提示词将包含当前项目上下文；本工具不会直接调用模型。</div><div class="actions"><button class="btn primary" data-action="prompt">生成阶段提示词 ✧</button><a class="text-link" href="workflow.html">查看阶段验收标准 ↗</a></div><div class="prompt-panel" id="prompt-panel" hidden><div class="prompt-header"><h3>阶段提示词 · 本地组装</h3><button class="btn small" data-action="copy-prompt">复制提示词</button></div><label class="sr-only" for="prompt-output">阶段提示词</label><textarea id="prompt-output" readonly></textarea></div>`;
   if(stage==='shots')shotSummary();
-  if(storageFailed)saveLabel(conflict?'另一标签页已更新项目；本页暂停保存，请导出备份后刷新。':loadBlocked?'本次仅临时编辑：请导出 JSON 备份。':'本地保存不可用，请立即导出 JSON。');
+  const cards=associate(p,stage,assistSeed);
+  $('#editor').insertAdjacentHTML('beforeend',`<section class="assistant-panel"><div class="section-head"><div><div class="eyebrow">CREATIVE CO-PILOT</div><h3>这一步，让思路再走远一点。</h3></div><button class="btn small" data-action="shuffle-ideas">换一组联想 ↻</button></div><p class="note">本地联想采用创作规则组合，不调用模型。结果仅供启发，不会自动改动原稿。</p><div class="idea-grid">${cards.map(([title,body],i)=>`<article><span class="pill">${title}</span><p>${escape(body)}</p><button class="text-button" data-idea="${i}">展开为 AI 追问 ↗</button></article>`).join('')}</div><details class="review-box"><summary>查看本阶段流程检查 · ${reviewProject(p,stage).length} 条</summary><ul>${reviewProject(p,stage).map(s=>`<li>${escape(s)}</li>`).join('')}</ul><p class="note">检查结果在切换阶段或重新打开本阶段时更新。</p></details><div class="actions"><button class="btn small" data-action="review">刷新流程检查</button><button class="btn small" disabled title="尚未配置模型接口">模型生成 · 尚未启用</button></div></section><section class="tools-panel"><h3>把这一阶段交给合适的工具</h3><p class="note">先复制提示词，再打开官方工具。不会自动传送你的草稿；外部服务可能需要账号或付费。</p><div class="tool-grid">${TOOLS.filter(t=>t.stages.includes(stage)).map(t=>`<a href="${t.url}" target="_blank" rel="noopener noreferrer"><strong>${t.name} ↗</strong><span>${t.description}</span></a>`).join('')}</div></section>`);
+  if(storageFailed)saveLabel(conflict?'另一标签页已更新项目；本页暂停保存，请导出备份后刷新。':loadBlocked?'本次仅临时编辑：请导出 JSON 备份。':'保存不可用，请立即导出 JSON。');
 }
 function chooseStage(id){stage=id;const url=new URL(location.href);url.searchParams.set('stage',id);history.replaceState({},'',url);renderEditor();}
 if(page==='studio'){
   if(!projects.length)addProject(newProject());else if(!projects.some(p=>p.id===currentId))currentId=projects[0].id;
   renderEditor();
+  const banner=$('.guest-banner');if(banner){banner.innerHTML=cloudMode?`<div><strong>账号云端工作区</strong><p>${escape(session.user.name)} · 修改后自动上传当前账号。游客草稿仍留在本机，需要时可主动导入。</p></div><div class="actions"><button class="btn small" data-action="import-local">导入游客草稿到云端</button><button class="btn small" data-action="retry-cloud">立即同步</button><a class="text-link" href="studio.html?space=local">游客本地工作区 ↗</a></div>`:`<div><strong>游客本地工作区</strong><p>草稿仅保存在当前浏览器。登录后可使用独立的云端工作区，游客内容不会自动上传。</p></div><button class="btn small" data-action="account">登录 / 云端项目 ↗</button>`;}
   $('#project-select').addEventListener('change',e=>{currentId=e.target.value;persist();renderEditor();});
   $('#editor').addEventListener('input',e=>{
     const el=e.target,p=current();
@@ -78,21 +97,29 @@ if(page==='studio'){
   });
   $('#editor').addEventListener('change',e=>{const el=e.target;if(el.dataset.field==='duration')el.value=current().duration;if(el.dataset.shotField==='seconds')el.value=current().shots.find(s=>s.id===el.closest('[data-shot]').dataset.shot).seconds;});
   $('#import-file').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>10*1024*1024)throw new Error('文件超过 10MB，请选择较小的项目备份。');const imported=importProjects(JSON.parse(await file.text()));if(projects.length+imported.length>30)throw new Error('导入后超过 30 个项目，请先备份并清理旧项目。');projects.push(...imported);currentId=imported[0].id;persist();renderEditor();toast(`已导入 ${imported.length} 个项目，不覆盖已有项目。`);}catch(error){toast('导入失败：'+error.message);}e.target.value='';});
-  if(storageFailed){const warning=$('#storage-warning');warning.hidden=false;warning.textContent='浏览器存储不可用或原数据无法读取，本页可临时编辑。离开前请导出全部项目备份。';}
+  if(storageFailed){const warning=$('#storage-warning');warning.hidden=false;warning.textContent=(cloudMode?'云端存储':'浏览器存储')+'不可用或原数据无法读取，本页可临时编辑。离开前请导出全部项目备份。';}
 }
-window.addEventListener('beforeunload',e=>{if(page==='studio'&&storageFailed){e.preventDefault();e.returnValue='';}});
+window.addEventListener('beforeunload',e=>{if(page==='studio'&&(storageFailed||cloudPending)){e.preventDefault();e.returnValue='';}});
 document.addEventListener('click',async e=>{
   const b=e.target.closest('button');if(!b)return;
+  if(b.dataset.viewTemplate){const t=PROMPTS.find(t=>t.id===b.dataset.viewTemplate);$('#copy-dialog-title').textContent=t.title;$('#copy-fallback').value=fillTemplate(t);$('#copy-dialog').showModal();return;}
+  if(b.dataset.idea!==undefined){const [title,body]=associate(current(),stage,assistSeed)[Number(b.dataset.idea)];$('#prompt-output').value=buildPrompt(current(),stage)+`\n\n【联想扩展：${title}】\n${body}\n请给出三种不同展开，解释各自取舍，保留原设定。`;$('#prompt-panel').hidden=false;$('#prompt-panel').scrollIntoView({behavior:'smooth',block:'center'});return;}
   if(b.dataset.copyTemplate){const t=TEMPLATES.find(t=>t.id===b.dataset.copyTemplate);await copy(`你是一位漫剧编导与制作统筹。\n项目背景：[填写故事、受众、风格、画幅和目标时长]\n已有材料：[填写剧本与角色设定]\n任务：${t.prompt}\n约束：保持角色和世界观一致；标注不确定信息。\n验收：给出可执行结果及三个需要人工复核的要点。`);return;}
   if(b.dataset.stage){chooseStage(b.dataset.stage);return;}
   if(b.dataset.removeShot){if(!confirm('删除这个镜头？此操作不能撤销。'))return;current().shots=current().shots.filter(s=>s.id!==b.dataset.removeShot);touch();renderEditor();return;}
   if(b.dataset.move){const p=current(),i=p.shots.findIndex(s=>s.id===b.dataset.move);if(i>0){[p.shots[i],p.shots[i-1]]=[p.shots[i-1],p.shots[i]];touch();renderEditor();}return;}
   const action=b.dataset.action;if(!action)return;
   if(action==='close-copy'){$('#copy-dialog').close();return;}
+  if(action==='account'){$('#account-dialog').showModal();return;}
+  if(action==='close-account'){$('#account-dialog').close();return;}
   if(action==='example'&&page!=='studio'){location.href='studio.html?example=1';return;}
   if(action==='example'){if(addProject(exampleProject())){if(page==='studio'){chooseStage('brief');toast('已新建示例项目。');}else if(storageFailed){toast('浏览器存储不可用，请进入工作台后载入示例。');}else location.href='studio.html';}return;}
   if(page!=='studio')return;const p=current();
   switch(action){
+    case 'shuffle-ideas':assistSeed++;renderEditor();break;
+    case 'review':renderEditor();toast('已根据当前内容更新流程检查。');break;
+    case 'retry-cloud':if(conflict){toast('版本冲突：请导出当前草稿，再刷新读取云端。');break;}if(loadBlocked){toast('云端读取失败，请备份后刷新重试。');break;}saveCloud();break;
+    case 'import-local':{try{const raw=JSON.parse(localStorage.getItem(STORE)||'[]');if(!raw.length){toast('本机没有游客草稿。');break;}if(!confirm(`将本机 ${raw.length} 个游客项目复制到当前账号云端？本地原稿会保留。`))break;const imported=raw.map(normalizeProject);if(projects.length+imported.length>30)throw new Error('导入后超过 30 个项目');projects.push(...imported);currentId=imported[0].id;persist();renderEditor();toast('已复制到云端工作区，正在保存。');}catch(error){toast(error.message);}break;}
     case 'new':if(addProject(newProject(`未命名漫剧 ${projects.length+1}`)))chooseStage('brief');break;
     case 'duplicate':{const duplicate=normalizeProject(p);duplicate.name=(p.name+' · 副本').slice(0,100);if(addProject(duplicate)){renderEditor();toast('已创建项目副本。');}break;}
     case 'export-all':download(JSON.stringify(createBackup(projects),null,2),'json','application/json;charset=utf-8','漫序全部项目备份');break;
@@ -107,6 +134,10 @@ document.addEventListener('click',async e=>{
     case 'export-csv':download(shotsCSV(p),'csv','text/csv;charset=utf-8');break;
   }
 });
+const accountButton=$('[data-action="account"]');if(accountButton)accountButton.textContent=session.user?'我的账号':'登录 / 云同步';
+const accountContent=$('#account-content');if(accountContent){accountContent.innerHTML=session.user?`<div class="notice">已通过 ChatGPT 登录：${escape(session.user.name)}</div><a class="btn primary" href="studio.html?space=cloud">打开云端工作区</a><a class="btn" href="studio.html?space=local">继续游客本地创作</a><p class="note">云端项目按账号隔离。退出登录不会删除云端资料。</p><a class="text-link" target="_top" href="/signout-with-chatgpt?return_to=%2F">退出账号</a>`:`<p class="subtitle">游客可直接使用；登录后开启独立的云端工作区。</p><a class="btn primary auth-provider" target="_top" href="/signin-with-chatgpt?return_to=%2Fstudio.html%3Fspace%3Dcloud">使用 ChatGPT 登录 ↗</a><button class="btn auth-provider" disabled>使用 Google 登录 · 尚未配置</button><button class="btn auth-provider" disabled>使用 Apple 登录 · 尚未配置</button><p class="note">Google / Apple 独立登录暂不可用。ChatGPT 登录页提供哪些登录方式，以其实际页面为准。</p><a class="text-link" href="studio.html?space=local">继续以游客身份创作 ↗</a>`;}
+const selectedTemplate=PROMPTS.find(t=>t.id===new URLSearchParams(location.search).get('template'));
+if(page==='studio'&&selectedTemplate){chooseStage(selectedTemplate.stage);$('#prompt-output').value=fillTemplate(selectedTemplate,current());$('#prompt-panel').hidden=false;}
 if(page==='studio'&&new URLSearchParams(location.search).get('example')==='1'){
   if(addProject(exampleProject())){const url=new URL(location.href);url.searchParams.delete('example');history.replaceState({},'',url);chooseStage('brief');toast('已载入示例项目，可直接修改。');}
 }

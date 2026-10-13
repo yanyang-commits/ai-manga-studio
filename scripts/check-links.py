@@ -1,7 +1,7 @@
 from pathlib import Path
 from html.parser import HTMLParser
 from urllib.parse import urlsplit, unquote
-root = Path(__file__).resolve().parents[1] / 'dist'
+root = Path(__file__).resolve().parents[1] / 'web'
 errors = []
 class Links(HTMLParser):
     def handle_starttag(self, tag, attrs):
