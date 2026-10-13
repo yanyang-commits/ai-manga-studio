@@ -6,7 +6,7 @@
 
 - 正式站点：https://mangaflow-studio.leoyang6667.chatgpt.site
 - 提示词库：https://mangaflow-studio.leoyang6667.chatgpt.site/templates.html
-- 公开仓库：https://github.com/yanyang-commits/ai-manga-studio
+- 公开仓库：https://github.com/yanyang-commits/mangaflow-studio
 
 ## 功能与实际状态
 
@@ -79,7 +79,7 @@ npm start
 3. 配置服务端模型接口、配额与速率限制，再开放剧本和分镜辅助生成；密钥不得进入公开仓库或浏览器。
 4. 再考虑媒体任务队列、素材版本管理、协作和付费，避免过早引入复杂依赖。
 
-详见 docs/。反馈：https://github.com/yanyang-commits/ai-manga-studio/issues
+详见 docs/。反馈：https://github.com/yanyang-commits/mangaflow-studio/issues
 
 ## 品牌标识
 
