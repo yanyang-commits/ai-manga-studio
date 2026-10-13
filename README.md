@@ -80,3 +80,7 @@ npm start
 4. 再考虑媒体任务队列、素材版本管理、协作和付费，避免过早引入复杂依赖。
 
 详见 docs/。反馈：https://github.com/yanyang-commits/ai-manga-studio/issues
+
+## 品牌标识
+
+2026-10-13 更新原创 SVG 标识：漫画分格、展开书页与播放三角组合，沿用森林绿与浅青绿色。`web/assets/logo.svg` 用于全站导航，`favicon.svg` 用于浏览器标签；无需外部图片或字体。
